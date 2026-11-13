@@ -1,0 +1,210 @@
+// SLnormalform.magma -- semilinear normal form for sigma of prime order
+//
+// Setting: L a number field, sigma an automorphism of L of PRIME order r,
+// K = L^sigma. For A in GL_n(L), this computes a matrix in semilinear
+// normal form which is sigma-conjugate to A:
+//
+//   1. SemilinearNormalFormFactors gives the orbits O = [(p, t)] occurring,
+//      their multiplicities, and the Schur indices m = m_L^sigma(p).
+//   2. For each orbit a solution B_alpha(p) of N^{tau_alpha}(B) = alpha * I_m
+//      is found. As r is prime there are three cases:
+//        (a) r(p) = r:         tau_alpha is trivial, m = 1, B = (alpha);
+//        (b) r(p) = 1, m = r:  B = R_r(alpha), the r x r matrix with alpha
+//                              in the top right corner and 1's on the
+//                              subdiagonal, so B^r = alpha * I;
+//        (c) r(p) = 1, m = 1:  B = (beta), where beta in L(alpha) solves
+//                              N_{L(alpha)/K(alpha)}(beta) = alpha
+//                              (found with NormEquation).
+//   3. LiftingRepresentative turns B_alpha(p) into A_O at level t.
+//   4. The normal form is the block sum of the A_O with multiplicities.
+//
+// Requires, in the same directory:
+//   semilinearnormalformfactors.magma  (SemilinearNormalFormFactors)
+//   liftingrepresentatives.magma       (LiftingRepresentative, InductionMatrix)
+// and the files those load: GJNF.magma, sigmaconjuacy.magma,
+// SLschurindexnumberfield.magma.
+//
+// Example Usage:
+//
+// L<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+// sigma := hom< L -> L | -i >;
+// A := Matrix(L, 2, 2, [0, -1, 1, 0]);      // one orbit, case (b)
+// A, SLNormalForm(L, sigma, 2, A);
+// A := Matrix(L, 2, 2, [2 + i, 1, 0, 2 - i]);   // norm has char poly (x-5)^2, case (c)
+// A, SLNormalForm(L, sigma, 2, A);
+// A := Matrix(L, 3, 3, [  3 + 6*i,       -9,  -1 - 14*i,
+//                        -2 + 2*i, -1 - 4*i,      5 - i,
+//                         2 + 4*i,       -6,       -9*i ]);
+// A, SLNormalForm(L, sigma, 2, A);
+
+load "semilinearnormalformfactors.magma";
+load "liftingrepresentatives.magma";
+
+// Solves N_{L(alpha)/K_p(alpha)}(beta) = alpha, where alpha is a root of p.
+// Assumes L is absolute simple (L = Q(L.1)). The field construction is the
+// one used in SLSIndexAbs.
+//
+// Returns true and beta as a polynomial b(y) over L of degree < deg p
+// (so beta = b(alpha)), or false if there is no solution.
+function SolveNormAlphaAbs(L, sigma, r, p)
+    P := Parent(p);
+    sig := func< f | P ! [ sigma(c) : c in Coefficients(f) ] >;
+
+    // r(p) and n = [L : K_p].
+    s := 1;
+    q := sig(p);
+    while q ne p do
+        q := sig(q);
+        s +:= 1;
+        error if s gt r, "sigma^r does not fix p: is r the order of sigma?";
+    end while;
+    error if r mod s ne 0, "r(p) does not divide r: is r the order of sigma?";
+    n := r div s;
+    if n eq 1 then
+        return true, P.1 mod p;          // the norm is the identity map
+    end if;
+
+    // g = minimal polynomial of theta = L.1 over K_p.
+    theta := L.1;
+    conj := [ theta ];
+    for j in [2..n] do
+        t := conj[#conj];
+        for i in [1..s] do
+            t := sigma(t);
+        end for;
+        Append(~conj, t);
+    end for;
+    g := &*[ P.1 - c : c in conj ];
+    cg := Coefficients(g);
+
+    // F0 = K_p as an abstract field.
+    if forall{ c : c in cg | IsCoercible(Rationals(), c) } then
+        F0 := Rationals();
+    else
+        F0 := sub< L | cg >;
+    end if;
+    R0 := PolynomialRing(F0);
+    p0 := R0 ! [ F0 ! c : c in Coefficients(p) ];
+    g0 := R0 ! [ F0 ! c : c in cg ];
+
+    // F = K_p(alpha), as an absolute field, and E = L(alpha) = F(theta).
+    linear := Degree(p) eq 1;
+    if linear then
+        F := F0;
+        alpha := -Coefficient(p0, 0);
+        gF := g0;
+    else
+        Frel := NumberField(p0);
+        F := AbsoluteField(Frel);
+        alpha := F ! Frel.1;
+        gF := PolynomialRing(F) ! [ F ! (Frel ! c) : c in Coefficients(g0) ];
+    end if;
+    E := NumberField(gF);
+
+    ok, sol := NormEquation(E, alpha);
+    if not ok then
+        return false, _;
+    end if;
+    beta := sol[1];
+
+    // Translate beta back to L[y] / (p): E.1 -> theta, alpha -> y, and
+    // F0 -> L by inclusion.
+    b := P ! 0;
+    cs := Eltseq(beta);                  // coefficients in F w.r.t. 1, E.1, ...
+    for k in [1..#cs] do
+        if linear then
+            ck := P ! (L ! cs[k]);
+        else
+            ck := P ! [ L ! a : a in Eltseq(Frel ! cs[k]) ];
+        end if;
+        b +:= ck * theta^(k-1);
+    end for;
+    return true, b mod p;
+end function;
+
+// As SolveNormAlphaAbs, for any number field L.
+function SolveNormAlpha(L, sigma, r, p)
+    P := Parent(p);
+    error if BaseRing(P) cmpne L, "p must be a polynomial over L";
+    Labs := AbsoluteField(L);
+    sigmaAbs := func< x | Labs ! sigma(L ! x) >;
+    pAbs := PolynomialRing(Labs) ! [ Labs ! c : c in Coefficients(p) ];
+    ok, b := SolveNormAlphaAbs(Labs, sigmaAbs, r, pAbs);
+    if not ok then
+        return false, _;
+    end if;
+    return true, P ! [ L ! c : c in Coefficients(b) ];
+end function;
+
+// L     : a number field
+// sigma : an automorphism of L (a Magma map L -> L)
+// r     : the order of sigma, which must be prime (primality is checked,
+//         the order is not)
+// A     : an invertible n x n matrix over L
+//
+// Returns a matrix S in semilinear normal form which is sigma-conjugate
+// to A, followed by the factor data <orbit, t, mult, m> from
+// SemilinearNormalFormFactors, in the order the blocks appear in S.
+function SLNormalForm(L, sigma, r, A)
+    error if not IsPrime(r), "the order r of sigma must be prime";
+    n := Nrows(A);
+    error if Ncols(A) ne n, "A must be square";
+    AL := Matrix(L, n, n, Eltseq(A));
+
+    factors := SemilinearNormalFormFactors(L, sigma, r, AL);
+    P := PolynomialRing(L);
+    y := P.1;
+
+    seenp := [];                         // cache of B_alpha(p)
+    seenB := [* *];
+    first := true;                       // S is built up block by block
+    for fac in factors do
+        p := fac[1][1];
+        t := fac[2];
+        mult := fac[3];
+        m := fac[4];
+
+        c := Index(seenp, p);
+        if c ne 0 then
+            B := seenB[c];
+        else
+            if #fac[1] eq r then
+                // (a) r(p) = r: tau_alpha is trivial.
+                error if m ne 1, "unexpected Schur index", m, "when r(p) = r";
+                B := Matrix(P, 1, 1, [ y ]);
+            elif m eq r then
+                // (b) maximal Schur index: B = R_r(alpha).
+                B := InductionMatrix(Matrix(P, 1, 1, [ y ]), r);
+            else
+                // (c) trivial Schur index: solve the norm equation.
+                error if m ne 1, "Schur index", m, "is neither 1 nor r";
+                ok, beta := SolveNormAlpha(L, sigma, r, p);
+                error if not ok,
+                    "no solution to N(beta) = alpha although the Schur index is 1";
+                B := Matrix(P, 1, 1, [ beta ]);
+            end if;
+            Append(~seenp, p);
+            Append(~seenB, B);
+        end if;
+
+        AO := LiftingRepresentative(L, sigma, r, p, B, t);
+        // (Blocks of different sizes cannot be collected in one sequence,
+        // so join them one at a time.)
+        for j in [1..mult] do
+            if first then
+                S := AO;
+                first := false;
+            else
+                S := DiagonalJoin(S, AO);
+            end if;
+        end for;
+    end for;
+
+    // Sanity checks: right size, and the norms of S and A are conjugate.
+    error if Nrows(S) ne n,
+        "internal check failed: normal form has dimension", Nrows(S), "not", n;
+    error if not IsSimilar(TwistedNorm(sigma, r, S), TwistedNorm(sigma, r, AL)),
+        "internal check failed: norms of A and its normal form are not conjugate";
+
+    return S, factors;
+end function;

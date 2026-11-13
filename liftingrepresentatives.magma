@@ -1,0 +1,199 @@
+// liftingrepresentatives.magma -- representatives A_O for the indecomposable
+// semilinear representations W_O, O = [(p(x), t)]
+//
+// Setting: L a number field, sigma an automorphism of L of order r,
+// K = L^sigma, p(x) in L[x] monic irreducible of degree n, p(x) ne x,
+// alpha a root of p, r(p) = least s >= 1 with sigma^s(p) = p,
+// rho = sigma^r(p) (of order e = r / r(p)), and tau_alpha the automorphism
+// of L(alpha) acting as rho on L and fixing alpha.
+//
+// Input: a solution B_alpha in GL_m(L(alpha)) of
+//     N^{tau_alpha}(B_alpha) = alpha * I_m,
+// and a level t >= 1.
+//
+// Output: A_O in GL_N(L), N = m * n * r(p) * t, with
+//     N^sigma(A_O) = sum over j = 0..r(p)-1 of C(sigma^j(p)^t)^(+m).
+//
+// Construction:
+//   1. Write the entries of B_alpha as polynomials q_ij(y) of degree < n,
+//      giving A_1 in GL_m(R_1), where R_k = L[y] / p(y)^k.
+//   2. Lift step by step: given A_k over R_k, regard it over R_(k+1), put
+//          E = A_k * rho(A_k) * ... * rho^(e-1)(A_k) - y * I_m,
+//          A_(k+1) = (1 - u * y^-1 * E) * A_k,
+//      where u in L has Tr_{L/K_p}(u) = 1. We take u = 1/e.
+//   3. B(p^t) = ( f_ij(C(p^t)) ), where A_t = (f_ij).
+//   4. A_O = R_{r(p)}(B(p^t)), the block matrix with B(p^t) in the top
+//      right block and identity blocks on the block subdiagonal:
+//          [ 0  0  ...  0  B ]
+//          [ I  0  ...  0  0 ]
+//          [ 0  I  ...  0  0 ]
+//          [       ...       ]
+//          [ 0  0  ...  I  0 ]
+//      It satisfies A_O * sigma(A_O) * ... * sigma^(r(p)-1)(A_O)
+//          = B + sigma(B) + ... + sigma^(r(p)-1)(B)   (block sum).
+//
+// Requires GJNF.magma (Companion, PolyAtMatrix) and sigmaconjuacy.magma
+// (TwistedNorm) in the same directory.
+//
+// Example Usage:
+//
+    // L<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+    // sigma := hom< L -> L | -i >;
+    // R<y> := PolynomialRing(L);
+
+    // // Example 1: p = y^2 + y + 1, alpha = omega, m = 1.
+    // // N(-1 - omega) = (1 + omega)^2 = omega, so B_alpha = (-1 - alpha).
+    // B1 := Matrix(R, 1, 1, [-1 - y]);
+    // B1;
+    // LiftingRepresentative(L, sigma, 2, y^2 + y + 1, B1, 3);   // 6 x 6
+
+    // // Example 2: p = y^2 - 3, alpha = sqrt(3), m = 2.
+    // // B_alpha = [0 alpha; 1 0] is tau-fixed and squares to alpha * I.
+    // E<a> := ext< L | y^2 - 3 >;
+    // B2 := Matrix(E, 2, 2, [0, a, 1, 0]);
+    // LiftingRepresentative(L, sigma, 2, y^2 - 3, B2, 2);       // 8 x 8
+
+//
+// The matrix B_alpha may be given in any of three ways:
+//   - over PolynomialRing(L): entries are the polynomials q_ij(y);
+//   - over E, where E is NumberField(p) or ext< L | p > (so E.1 = alpha);
+//   - over L itself (entries constant in alpha, e.g. when deg p = 1).
+
+load "GJNF.magma";
+load "sigmaconjuacy.magma";
+
+// Apply sigma^k to the coefficients of the polynomial f.
+function ApplyToPoly(sigma, k, f)
+    P := Parent(f);
+    g := f;
+    for j in [1..k] do
+        g := P ! [ sigma(c) : c in Coefficients(g) ];
+    end for;
+    return g;
+end function;
+
+// Apply sigma^k to the coefficients of every entry of a polynomial matrix.
+function ApplyToPolyMatrix(sigma, k, M)
+    return Matrix(BaseRing(M), Nrows(M), Ncols(M),
+                  [ ApplyToPoly(sigma, k, f) : f in Eltseq(M) ]);
+end function;
+
+// Reduce every entry of a polynomial matrix modulo q.
+function ReducePolyMatrix(M, q)
+    return Matrix(BaseRing(M), Nrows(M), Ncols(M),
+                  [ f mod q : f in Eltseq(M) ]);
+end function;
+
+// M * rho(M) * ... * rho^(e-1)(M) modulo q, where rho = sigma^s.
+function PolyTwistedNorm(sigma, s, e, M, q)
+    N := M;
+    S := M;
+    for j in [1..e-1] do
+        S := ApplyToPolyMatrix(sigma, s, S);
+        N := ReducePolyMatrix(N * S, q);
+    end for;
+    return N;
+end function;
+
+// The matrix R_s(B): B in the top right block, identities on the block
+// subdiagonal.
+function InductionMatrix(B, s)
+    if s eq 1 then
+        return B;
+    end if;
+    L := BaseRing(B);
+    d := Nrows(B);
+    A := ZeroMatrix(L, s*d, s*d);
+    InsertBlock(~A, B, 1, (s-1)*d + 1);
+    for j in [1..s-1] do
+        InsertBlock(~A, ScalarMatrix(L, d, 1), j*d + 1, (j-1)*d + 1);
+    end for;
+    return A;
+end function;
+
+// L      : a number field
+// sigma  : an automorphism of L (a Magma map L -> L)
+// r      : the order of sigma (not checked)
+// p      : a monic irreducible polynomial over L, p ne x
+// Balpha : an m x m matrix with N^{tau_alpha}(Balpha) = alpha * I_m
+//          (see the header for the accepted formats)
+// t      : the level, t >= 1
+//
+// Returns A_O, followed by B(p^t) and the lifted matrix A_t over L[y]
+// (entries reduced modulo p^t).
+function LiftingRepresentative(L, sigma, r, p, Balpha, t)
+    P := Parent(p);
+    error if BaseRing(P) cmpne L, "p must be a polynomial over L";
+    error if not IsMonic(p) or not IsIrreducible(p),
+        "p must be monic and irreducible over L";
+    error if Coefficient(p, 0) eq 0, "p(x) = x is not allowed (alpha = 0)";
+    error if t lt 1, "t must be at least 1";
+    y := P.1;
+    n := Degree(p);
+    m := Nrows(Balpha);
+    error if Ncols(Balpha) ne m, "Balpha must be square";
+
+    // Entries of Balpha as polynomials in y of degree < n.
+    RB := BaseRing(Balpha);
+    if RB cmpeq P then
+        Q := Matrix(P, m, m, Eltseq(Balpha));
+    elif RB cmpeq L then
+        Q := Matrix(P, m, m, [ P ! b : b in Eltseq(Balpha) ]);
+    else
+        error if not ISA(Type(RB), FldAlg) or BaseField(RB) cmpne L
+                 or DefiningPolynomial(RB) ne p,
+            "Balpha must be over L[y], over L, or over the extension of L defined by p";
+        Q := Matrix(P, m, m, [ P ! Eltseq(b) : b in Eltseq(Balpha) ]);
+    end if;
+
+    // r(p) and e = order of rho = sigma^r(p).
+    s := 1;
+    q := ApplyToPoly(sigma, 1, p);
+    while q ne p do
+        q := ApplyToPoly(sigma, 1, q);
+        s +:= 1;
+        error if s gt r, "sigma^r does not fix p: is r the order of sigma?";
+    end while;
+    error if r mod s ne 0, "r(p) does not divide r: is r the order of sigma?";
+    e := r div s;
+
+    Im := ScalarMatrix(P, m, P ! 1);
+
+    // Level 1: check the hypothesis N^{tau_alpha}(Balpha) = alpha * I_m.
+    At := ReducePolyMatrix(Q, p);
+    error if PolyTwistedNorm(sigma, s, e, At, p) ne ScalarMatrix(P, m, y mod p),
+        "Balpha does not satisfy N(Balpha) = alpha * I";
+
+    // Lift from R_k to R_(k+1).
+    u := L ! (1/e);                       // Tr_{L/K_p}(1/e) = 1
+    pk := p;
+    for k in [1..t-1] do
+        pk := pk * p;                     // p^(k+1)
+        E := ReducePolyMatrix(
+                 PolyTwistedNorm(sigma, s, e, At, pk) - ScalarMatrix(P, m, y), pk);
+        g, yinv := XGCD(y, pk);           // yinv * y = 1 mod p^(k+1)
+        error if g ne 1, "y is not invertible modulo p^k";
+        At := ReducePolyMatrix((Im - (u * yinv) * E) * At, pk);
+    end for;
+    // Now pk = p^t and N(At) = y * I_m modulo p^t.
+
+    // B(p^t) = ( f_ij(C(p^t)) ).
+    C := Companion(pk);
+    B := BlockMatrix(m, m, [ PolyAtMatrix(f, C) : f in Eltseq(At) ]);
+
+    // A_O = R_{r(p)}(B(p^t)).
+    AO := InductionMatrix(B, s);
+
+    // Check: N^sigma(A_O) = sum_j C(sigma^j(p)^t)^(+m).
+    blocks := [];
+    for j in [0..s-1] do
+        Cj := Companion(ApplyToPoly(sigma, j, p)^t);
+        for c in [1..m] do
+            Append(~blocks, Cj);
+        end for;
+    end for;
+    error if TwistedNorm(sigma, r, AO) ne DiagonalJoin(blocks),
+        "internal check failed: N^sigma(A_O) is not the expected block sum";
+
+    return AO, B, At;
+end function;

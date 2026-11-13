@@ -1,0 +1,123 @@
+//
+// Conventions follow the write-up: matrices act on column vectors, C(f) has
+// 1's on the subdiagonal and the negated coefficients of f in the last column,
+// and A is conjugate to B = GJNF(A) via  A*P = P*B.
+//
+// Example Usage:
+//
+//   K<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+//   A := Matrix(K, 4, 4, [0,-1,1,0, 1,0,0,1, 0,0,0,-1, 0,0,1,0]);
+//   blocks := GJNFBlocks(A);       // [ <x^2 + 1 factor, exponent, multiplicity>, ... ]
+//   B := GJNF(A);
+//   B, P := GJNFWithTransformation(A);   // A*P eq P*B
+
+// Companion matrix C(f), column convention (x acting on 1, x, ..., x^(n-1)).
+function Companion(f)
+    n := Degree(f);
+    error if n lt 1, "Companion: polynomial must have degree >= 1";
+    L := BaseRing(Parent(f));
+    a := Coefficients(f);                 // a[i] = coefficient of x^(i-1)
+    C := ZeroMatrix(L, n, n);
+    for i in [1..n-1] do
+        C[i+1, i] := 1;
+    end for;
+    for i in [1..n] do
+        C[i, n] := -a[i] / a[n+1];
+    end for;
+    return C;
+end function;
+
+// q(A) by Horner's rule.
+function PolyAtMatrix(q, A)
+    L := BaseRing(A);
+    n := Nrows(A);
+    R := ZeroMatrix(L, n, n);
+    for c in Reverse(Coefficients(q)) do
+        R := R * A + ScalarMatrix(L, n, c);
+    end for;
+    return R;
+end function;
+
+// Returns a sequence of triples <q, k, m>: the block C(q^k) occurs m times
+// in the GJNF of A. Here q runs over the monic irreducible factors of the
+// characteristic polynomial.
+function GJNFBlocks(A)
+    error if Nrows(A) ne Ncols(A), "GJNFBlocks: matrix must be square";
+    L := BaseRing(A);
+    n := Nrows(A);
+    A := Matrix(L, n, n, Eltseq(A));
+    blocks := [];
+    for pair in Factorization(CharacteristicPolynomial(A)) do
+        q := pair[1];
+        s := pair[2];
+        deg := Degree(q);
+        qA := PolyAtMatrix(q, A);
+
+        // d[k+1] = d_k(q) = dim ker q(A)^k.  The sequence stabilises at
+        // deg*s (the dimension of the q-primary component), at the largest
+        // exponent r with which q occurs.
+        d := [0];
+        M := ScalarMatrix(L, n, 1);
+        repeat
+            M := M * qA;
+            Append(~d, n - Rank(M));
+        until d[#d] eq deg * s;
+        r := #d - 1;
+        Append(~d, d[#d]);                // d_{r+1} = d_r
+
+        for k in [1..r] do
+            m := (2*d[k+1] - d[k+2] - d[k]) div deg;
+            if m gt 0 then
+                Append(~blocks, <q, k, m>);
+            end if;
+        end for;
+    end for;
+    return blocks;
+end function;
+
+// The GJNF matrix C(p_1^r_1) + ... + C(p_m^r_m) (block sum), together with
+// the block data. Blocks are ordered by irreducible factor (in the order
+// Factorization returns them), then by increasing exponent.
+function GJNF(A)
+    blocks := GJNFBlocks(A);
+    first := true;
+    for b in blocks do
+        C := Companion(b[1]^b[2]);
+        for j in [1..b[3]] do
+            if first then
+                B := C;
+                first := false;
+            else
+                B := DiagonalJoin(B, C);
+            end if;
+        end for;
+    end for;
+    return B, blocks;
+end function;
+
+// Returns B = GJNF(A) and an invertible P with A*P = P*B.
+// P is found by solving the linear system A*P - P*B = 0 (n^2 unknowns) and
+// taking a random invertible solution, so this is intended for moderate n.
+function GJNFWithTransformation(A)
+    L := BaseRing(A);
+    n := Nrows(A);
+    A := Matrix(L, n, n, Eltseq(A));
+    B, blocks := GJNF(A);
+    I := ScalarMatrix(L, n, 1);
+    // With P flattened row by row: vec(A*P) = (A tensor I) vec(P) and
+    // vec(P*B) = (I tensor B^T) vec(P).
+    S := KroneckerProduct(A, I) - KroneckerProduct(I, Transpose(B));
+    N := Basis(Kernel(Transpose(S)));     // Kernel is the left kernel in Magma
+    bound := 2;
+    while true do
+        for attempt in [1..20] do
+            v := &+[ Random(-bound, bound) * w : w in N ];
+            P := Matrix(L, n, n, Eltseq(v));
+            if Determinant(P) ne 0 then
+                assert A * P eq P * B;
+                return B, P, blocks;
+            end if;
+        end for;
+        bound *:= 2;
+    end while;
+end function;

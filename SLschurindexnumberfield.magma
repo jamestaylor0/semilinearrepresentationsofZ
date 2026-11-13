@@ -1,0 +1,112 @@
+//
+// Setting: L a number field, sigma an automorphism of L of order r,
+// K = L^sigma the fixed field, p(x) in L[x] monic irreducible, p(x) ne x.
+//   K_p   = K(coefficients of p)  = fixed field of sigma^r(p),
+//   r(p)  = [K_p : K]             = least s >= 1 with sigma^s(p) = p,
+//   alpha = a root of p.
+// L(alpha) / K_p(alpha) is cyclic of degree n = r / r(p), and
+// m_L^sigma(p) is the order of alpha in
+//   K_p(alpha)^* / N_{L(alpha)/K_p(alpha)}( L(alpha)^* ),
+// which divides n.
+//
+// L may be any number field: SLSIndex first passes to AbsoluteField(L),
+// transporting sigma and p, and then calls SLSIndexAbs, which assumes
+// L is absolute simple (L = Q(L.1)).
+//
+// Usage:
+//
+//   L<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+//   sigma := hom< L -> L | -i >;
+//   R<y> := PolynomialRing(L);
+//   SLSIndex(L, sigma, 2, y - 3);     // is 3 a norm from Q(i)? no -> 2
+//   SLSIndex(L, sigma, 2, y - 5);     // 5 = N(2 + i)           -> 1
+//   SLSchurIndex(L, sigma, 2, y + i);     // r(p) = 2, so m(p(x)) = 1. 
+//   SLSchurIndex(L, sigma, 2, y^2 + y + 1); 
+//   omega^3 = 1, omega \neq 1, is the norm of omega^-1 from Q(i,omega) to Q(omega), so m(p(x)) = 1. 
+//
+// The norm tests use NormEquation, which computes class/unit group data of
+// L(alpha). For large fields, consider SetClassGroupBounds("GRH") first.
+
+// Returns m_L^sigma(p), followed by r(p). Assumes L = Q(L.1).
+function SLSIndexAbs(L, sigma, r, p)
+    P := Parent(p);
+    error if BaseRing(P) cmpne L, "p must be a polynomial over L";
+    error if not IsMonic(p) or not IsIrreducible(p),
+        "p must be monic and irreducible over L";
+    error if Coefficient(p, 0) eq 0, "p(x) = x is not allowed (alpha = 0)";
+
+    sig := func< f | P ! [ sigma(c) : c in Coefficients(f) ] >;
+
+    // r(p): least s >= 1 with sigma^s(p) = p.
+    s := 1;
+    q := sig(p);
+    while q ne p do
+        q := sig(q);
+        s +:= 1;
+        error if s gt r, "sigma^r does not fix p: is r the order of sigma?";
+    end while;
+    error if r mod s ne 0, "r(p) does not divide r: is r the order of sigma?";
+    n := r div s;                       // [L : K_p] = [L(alpha) : K_p(alpha)]
+    if n eq 1 then
+        return 1, s;
+    end if;
+
+    // g = minimal polynomial of theta = L.1 over K_p; its coefficients
+    // generate K_p over Q.
+    theta := L.1;
+    conj := [ theta ];
+    for j in [2..n] do
+        t := conj[#conj];
+        for i in [1..s] do
+            t := sigma(t);
+        end for;
+        Append(~conj, t);
+    end for;
+    g := &*[ P.1 - c : c in conj ];
+    cg := Coefficients(g);
+
+    // F0 = K_p as an abstract field.
+    if forall{ c : c in cg | IsCoercible(Rationals(), c) } then
+        F0 := Rationals();
+    else
+        F0 := sub< L | cg >;
+    end if;
+    R0 := PolynomialRing(F0);
+    p0 := R0 ! [ F0 ! c : c in Coefficients(p) ];
+    g0 := R0 ! [ F0 ! c : c in cg ];
+
+    // F = K_p(alpha), as an absolute field.
+    if Degree(p) eq 1 then
+        F := F0;
+        alpha := -Coefficient(p0, 0);
+        gF := g0;
+    else
+        Frel := NumberField(p0);
+        F := AbsoluteField(Frel);
+        alpha := F ! Frel.1;
+        gF := PolynomialRing(F) ! [ F ! (Frel ! c) : c in Coefficients(g0) ];
+    end if;
+
+    // E = L(alpha) = F(theta). g stays irreducible over F because
+    // [L(alpha) : K_p(alpha)] = n = deg g.
+    E := NumberField(gF);
+
+    // The order of alpha divides n, since alpha^n = N(alpha).
+    for m in Divisors(n) do
+        if m eq n then
+            return n, s;
+        end if;
+        if NormEquation(E, alpha^m) then
+            return m, s;
+        end if;
+    end for;
+end function;
+
+// Returns m_L^sigma(p), followed by r(p), for any number field L.
+function SLSIndex(L, sigma, r, p)
+    error if BaseRing(Parent(p)) cmpne L, "p must be a polynomial over L";
+    Labs := AbsoluteField(L);
+    sigmaAbs := func< x | Labs ! sigma(L ! x) >;
+    pAbs := PolynomialRing(Labs) ! [ Labs ! c : c in Coefficients(p) ];
+    return SLSIndexAbs(Labs, sigmaAbs, r, pAbs);
+end function;

@@ -1,0 +1,48 @@
+//
+// Example Usage:
+//   load "twisted_norm.m";
+//   L<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+//   sigma := hom< L -> L | -i >;           // complex conjugation, order 2
+//   A := Matrix(L, 2, 2, [1, i, 0, 1]);
+//   B := Matrix(L, 2, 2, [i, 0, 1, 1]);
+//   IsTwistedNormConjugate(L, sigma, 2, A, B);
+
+// Apply a field map entrywise to a matrix.
+function ApplyToMatrix(sigma, A)
+    L := BaseRing(A);
+    return Matrix(L, Nrows(A), Ncols(A), [ sigma(a) : a in Eltseq(A) ]);
+end function;
+
+// N_d^sigma(A) = A * sigma(A) * ... * sigma^(r-1)(A), where r is the order
+// of sigma.
+function TwistedNorm(sigma, r, A)
+    N := A;
+    S := A;
+    for j in [1..r-1] do
+        S := ApplyToMatrix(sigma, S);
+        N := N * S;
+    end for;
+    return N;
+end function;
+
+// L     : a field
+// sigma : an automorphism of L (a Magma map L -> L)
+// r     : the order of sigma (not checked)
+// A, B  : invertible d x d matrices over L
+//
+// Returns true iff N_d^sigma(A) and N_d^sigma(B) are conjugate over L,
+// followed by the two norms themselves.
+function IsTwistedNormConjugate(L, sigma, r, A, B)
+    d := Nrows(A);
+    error if Ncols(A) ne d or Nrows(B) ne d or Ncols(B) ne d,
+        "A and B must be square of the same dimension";
+    A := Matrix(L, d, d, Eltseq(A));
+    B := Matrix(L, d, d, Eltseq(B));
+    error if Determinant(A) eq 0 or Determinant(B) eq 0,
+        "A and B must be invertible";
+
+    NA := TwistedNorm(sigma, r, A);
+    NB := TwistedNorm(sigma, r, B);
+
+    return IsSimilar(NA, NB), NA, NB;
+end function;

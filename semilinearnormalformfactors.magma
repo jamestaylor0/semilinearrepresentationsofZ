@@ -1,0 +1,111 @@
+//
+// Setting: L a number field, sigma an automorphism of L of order r,
+// K = L^sigma, Gamma = Gal(L/K) = <sigma> acting on monic irreducible
+// polynomials over L through their coefficients.
+//
+// For A in GL_n(L), the semilinear normal form is a block sum of matrices
+// A_O, indexed by Gamma-orbits O of pairs (q, t). This file computes which
+// orbits occur, and how often:
+//   1. N = A * sigma(A) * ... * sigma^(r-1)(A), and its GJNF blocks C(q^t);
+//   2. group the blocks into Gamma-orbits; every block in an orbit occurs
+//      the same number k of times;
+//   3. A_O occurs k / m times, where m = m_L^sigma(q) is the semilinear
+//      Schur index of any q in the orbit.
+//
+// Note: the Schur index attached to (q, t) is taken to be m_L^sigma(q),
+// i.e. independent of the exponent t.
+//
+// Requires GJNF.magma (GJNFBlocks), sigmaconjuacy.magma (TwistedNorm) and
+// SLschurindexnumberfield.magma (SLSIndex) in the same directory.
+//
+// Example Usage:
+//
+//   L<i> := NumberField(x^2 + 1) where x is PolynomialRing(Rationals()).1;
+//   sigma := hom< L -> L | -i >;
+//   A := Matrix(L, 2, 2, [0, -1, 1, 0]);
+//   SemilinearNormalFormFactors(L, sigma, 2, A);
+//   // N = -I, so C(x + 1) occurs k = 2 times; -1 is not a norm from Q(i),
+//   // so m = 2 and the answer is one block:  [ <[x + 1], 1, 1, 2> ]
+//   A := Matrix(L, 4, 4, [11, -1, i, 2, 0, 2, i, 0, -1, -i, i, 0, 10, -1, 1, 0]);
+//   SemilinearNormalFormFactors(L, sigma, 2, A);
+
+load "GJNF.magma";
+load "sigmaconjuacy.magma";
+load "SLschurindexnumberfield.magma";
+
+// L     : a number field
+// sigma : an automorphism of L (a Magma map L -> L)
+// r     : the order of sigma (not checked)
+// A     : an invertible n x n matrix over L
+//
+// Returns a sequence of tuples <orbit, t, mult, m>, one for each Gamma-orbit
+// O occurring in the semilinear normal form of A, where
+//   orbit : the polynomials q, sigma(q), sigma^2(q), ... in the orbit
+//           (orbit[1] is the chosen representative),
+//   t     : the exponent, so O is the orbit of (orbit[1], t),
+//   mult  : the number of times A_O occurs,
+//   m     : the semilinear Schur index m_L^sigma(orbit[1]).
+function SemilinearNormalFormFactors(L, sigma, r, A)
+    n := Nrows(A);
+    error if Ncols(A) ne n, "A must be square";
+    A := Matrix(L, n, n, Eltseq(A));
+    error if Determinant(A) eq 0, "A must be invertible";
+
+    N := TwistedNorm(sigma, r, A);
+    blocks := GJNFBlocks(N);                 // triples <q, t, k>
+    keys := [ <b[1], b[2]> : b in blocks ];
+
+    P := PolynomialRing(L);
+    sig := func< f | P ! [ sigma(c) : c in Coefficients(f) ] >;
+
+    done := {};
+    seenq := [];                             // cache of Schur indices
+    seenm := [];
+    result := [];
+    for i in [1..#blocks] do
+        if i in done then
+            continue;
+        end if;
+        q := blocks[i][1];
+        t := blocks[i][2];
+        k := blocks[i][3];
+
+        // Gamma-orbit of q.
+        orbit := [ q ];
+        f := sig(q);
+        while f ne q do
+            Append(~orbit, f);
+            f := sig(f);
+            error if #orbit gt r, "sigma^r does not fix q: is r the order of sigma?";
+        end while;
+
+        // Every (f, t) in the orbit must occur, with the same multiplicity.
+        for f in orbit do
+            j := Index(keys, <f, t>);
+            error if j eq 0 or blocks[j][3] ne k,
+                "GJNF of the norm is not Gamma-stable: is r the order of sigma?";
+            Include(~done, j);
+        end for;
+
+        // Schur index, computed once per orbit of q.
+        c := 0;
+        for f in orbit do
+            c := Index(seenq, f);
+            if c ne 0 then
+                break;
+            end if;
+        end for;
+        if c ne 0 then
+            m := seenm[c];
+        else
+            m := SLSIndex(L, sigma, r, q);
+            Append(~seenq, q);
+            Append(~seenm, m);
+        end if;
+
+        error if k mod m ne 0,
+            "multiplicity", k, "not divisible by Schur index", m;
+        Append(~result, <orbit, t, k div m, m>);
+    end for;
+    return result;
+end function;
