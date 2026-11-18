@@ -1,6 +1,6 @@
 # Semilinear Representations of $\mathbb{Z}$ - Magma Code
 
-This repository conditions magma code to accompany the paper [A Normal Form for Invertible Semilinear Maps and the Category of Isocrystals Over a Finite Field](https://arxiv.org/abs/???)
+This repository conditions magma code to accompany the paper [A Normal Form for Invertible Semilinear Maps and the Category of Isocrystals Over a Finite Field](https://arxiv.org/abs/2611.23162)
 
 Below we describe the contents of each file. These are implemented primarily for number fields - in some cases this is necessary, but most work more generally. For more details on the algorithms, see the final section of the associated paper.
 
